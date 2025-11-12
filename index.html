@@ -1,454 +1,1919 @@
-<!--
-  Gestionale Pazienti - PROFESSIONALE (single-file HTML)
-  -----------------------------------------------------
-  - Singolo file pronto per GitHub Pages
-  - Ruoli: admin, medico (users collection)
-  - Departments configurabili in Firestore (collection 'departments')
-  - Pazienti legati a createdBy (uid) e department
-  - Admin vede tutto; medico vede pazienti creati da lui o del suo reparto
-  - Dashboard con grafici Chart.js (pazienti per reparto, appuntamenti prossimi 7 giorni)
-  - No upload file
-
-  ISTRUZIONI:
-  1) Crea progetto Firebase, abilita Auth (Email/Password) e Firestore
-  2) Aggiungi una Web App e copia la firebaseConfig sotto
-  3) Pubblica in root di GitHub Pages
-
-  NOTE SULLA SICUREZZA:
-  - In ambiente di produzione configura regole Firestore che limitino l'accesso
-    (nell'intestazione del file ho lasciato esempi commentati)
--->
-
 <!doctype html>
 <html lang="it">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Gestionale Pazienti - EMS Professionale</title>
+  <title>EMS Hospital Management System - Professionale</title>
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
-  <style>body{font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial}</style>
-
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
   <!-- FullCalendar -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/main.min.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/main.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.8/locales/it.js"></script>
 
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
-  <!-- Firebase modular SDK -->
+  <!-- jsPDF for export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
+    .sidebar { background: linear-gradient(180deg, #1e3a8a 0%, #1e40af 100%); }
+    .nav-item { transition: all 0.2s ease; cursor: pointer; }
+    .nav-item:hover { background: rgba(255,255,255,0.1); }
+    .nav-item.active { background: #3b82f6; }
+    .page { min-height: 70vh; }
+    .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+    .badge-red { background: #fee2e2; color: #991b1b; }
+    .badge-yellow { background: #fef3c7; color: #92400e; }
+    .badge-green { background: #d1fae5; color: #065f46; }
+    .badge-blue { background: #dbeafe; color: #1e40af; }
+    .badge-white { background: #f3f4f6; color: #374151; }
+    .stat-card { background: white; border-radius: 0.5rem; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: transform 0.2s; }
+    .stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .modal-overlay { backdrop-filter: blur(4px); }
+    .notification { position: fixed; top: 1rem; right: 1rem; background: white; padding: 1rem 1.5rem; border-radius: 0.5rem; box-shadow: 0 10px 25px rgba(0,0,0,0.2); z-index: 9999; animation: slideIn 0.3s ease; }
+    @keyframes slideIn { from { transform: translateX(400px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .table-hover tbody tr:hover { background: #f9fafb; }
+    .btn-primary { background: #3b82f6; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 500; transition: all 0.2s; }
+    .btn-primary:hover { background: #2563eb; transform: translateY(-1px); }
+    .btn-secondary { background: #6b7280; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 500; }
+    .btn-danger { background: #ef4444; color: white; padding: 0.5rem 1rem; border-radius: 0.375rem; font-weight: 500; }
+    .input-field { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #d1d5db; border-radius: 0.375rem; transition: all 0.2s; }
+    .input-field:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+    .triage-red { border-left: 4px solid #dc2626; }
+    .triage-yellow { border-left: 4px solid #eab308; }
+    .triage-green { border-left: 4px solid #16a34a; }
+    .triage-white { border-left: 4px solid #9ca3af; }
+    .triage-blue { border-left: 4px solid #3b82f6; }
+  </style>
+
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.6.0/firebase-app.js';
     import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.6.0/firebase-auth.js';
-    import { getFirestore, collection, addDoc, setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, query, where, orderBy } from 'https://www.gstatic.com/firebasejs/10.6.0/firebase-firestore.js';
+    import { getFirestore, collection, addDoc, setDoc, doc, getDoc, getDocs, updateDoc, deleteDoc, query, where, orderBy, Timestamp, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.6.0/firebase-firestore.js';
 
-    // ====== CONFIG: incolla la tua firebaseConfig qui ======
-const firebaseConfig = {
-  apiKey: "AIzaSyBZJxyKCG2-8GUNIEqULL1R2orCNPbvAOU",
-  authDomain: "emsfiacre.firebaseapp.com",
-  projectId: "emsfiacre",
-  storageBucket: "emsfiacre.firebasestorage.app",
-  messagingSenderId: "172198127967",
-  appId: "1:172198127967:web:dcccaef65929387b56eeea"
-};
+    // Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyBZJxyKCG2-8GUNIEqULL1R2orCNPbvAOU",
+      authDomain: "emsfiacre.firebaseapp.com",
+      projectId: "emsfiacre",
+      storageBucket: "emsfiacre.firebasestorage.app",
+      messagingSenderId: "172198127967",
+      appId: "1:172198127967:web:dcccaef65929387b56eeea"
+    };
 
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
 
-    // Utility globale
-    window.Prof = {
-      auth, db,
+    // Default departments for the hospital
+    const DEFAULT_DEPARTMENTS = [
+      { name: 'Psicologia', description: 'Reparto di psicologia e salute mentale' },
+      { name: 'Medicina Legale e Forense', description: 'Medicina legale e forense' },
+      { name: 'Neurologia', description: 'Reparto di neurologia' },
+      { name: 'Ginecologia', description: 'Reparto di ginecologia e ostetricia' },
+      { name: 'Estetica', description: 'Chirurgia estetica e medicina estetica' },
+      { name: 'Cardiologia', description: 'Reparto di cardiologia' },
+      { name: 'Ortopedia', description: 'Reparto di ortopedia e traumatologia' },
+      { name: 'Medicina Generale', description: 'Medicina generale e pronto soccorso' }
+    ];
+
+    // Global state
+    window.AppState = {
+      currentUser: null,
+      departments: [],
+      patients: [],
+      appointments: [],
+      shifts: [],
+      prescriptions: [],
+      reports: [],
+      activityLog: []
+    };
+
+    // API wrapper
+    window.HospitalAPI = {
       // Auth
-      register: async (email, pass, name, department, role='medico') => {
+      register: async (email, pass, userData) => {
         const cred = await createUserWithEmailAndPassword(auth, email, pass);
-        // create users doc
-        await setDoc(doc(db,'users',cred.user.uid), { uid: cred.user.uid, email, name, department, role });
+        await setDoc(doc(db, 'users', cred.user.uid), {
+          uid: cred.user.uid,
+          email,
+          ...userData,
+          createdAt: serverTimestamp()
+        });
+        await HospitalAPI.logActivity('user_registered', `Nuovo utente registrato: ${userData.name}`);
         return cred;
       },
       login: (email, pass) => signInWithEmailAndPassword(auth, email, pass),
       logout: () => signOut(auth),
-      // departments
-      addDepartment: (d) => addDoc(collection(db,'departments'), { name: d }),
-      getDepartments: async () => { const s = await getDocs(collection(db,'departments')); return s.docs.map(d=>({id:d.id,...d.data()})); },
-      // users
-      getUserDoc: async (uid) => { const d = await getDoc(doc(db,'users',uid)); return d.exists()? {id:d.id,...d.data()} : null; },
-      // patients
-      addPatient: (p) => addDoc(collection(db,'patients'), p),
-      updatePatient: (id,data) => updateDoc(doc(db,'patients',id), data),
-      deletePatient: (id) => deleteDoc(doc(db,'patients',id)),
-      getAllPatients: async () => { const s = await getDocs(collection(db,'patients')); return s.docs.map(d=>({id:d.id,...d.data()})); },
-      // appointments
-      addAppointment: (a) => addDoc(collection(db,'appointments'), a),
-      updateAppointment: (id,data) => updateDoc(doc(db,'appointments',id), data),
-      deleteAppointment: (id) => deleteDoc(doc(db,'appointments',id)),
-      getAllAppointments: async () => { const s = await getDocs(collection(db,'appointments')); return s.docs.map(d=>({id:d.id,...d.data()})); }
+      
+      // Users
+      getUserDoc: async (uid) => {
+        const d = await getDoc(doc(db, 'users', uid));
+        return d.exists() ? { id: d.id, ...d.data() } : null;
+      },
+      getAllUsers: async () => {
+        const s = await getDocs(collection(db, 'users'));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      
+      // Departments
+      addDepartment: async (name, description) => {
+        const docRef = await addDoc(collection(db, 'departments'), { 
+          name, 
+          description: description || '',
+          createdAt: serverTimestamp() 
+        });
+        await HospitalAPI.logActivity('department_added', `Reparto aggiunto: ${name}`);
+        return docRef;
+      },
+      getDepartments: async () => {
+        const s = await getDocs(collection(db, 'departments'));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      initializeDefaultDepartments: async () => {
+        const existing = await HospitalAPI.getDepartments();
+        if (existing.length === 0) {
+          console.log('Inizializzazione reparti predefiniti...');
+          for (const dept of DEFAULT_DEPARTMENTS) {
+            await addDoc(collection(db, 'departments'), {
+              name: dept.name,
+              description: dept.description,
+              createdAt: serverTimestamp()
+            });
+          }
+          console.log('Reparti predefiniti aggiunti con successo!');
+        }
+      },
+      
+      // Patients
+      addPatient: async (patientData) => {
+        const docRef = await addDoc(collection(db, 'patients'), {
+          ...patientData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        await HospitalAPI.logActivity('patient_added', `Paziente aggiunto: ${patientData.firstName} ${patientData.lastName}`);
+        return docRef;
+      },
+      updatePatient: async (id, data) => {
+        await updateDoc(doc(db, 'patients', id), { ...data, updatedAt: serverTimestamp() });
+        await HospitalAPI.logActivity('patient_updated', `Paziente aggiornato: ${data.firstName || ''} ${data.lastName || ''}`);
+      },
+      deletePatient: async (id) => {
+        await deleteDoc(doc(db, 'patients', id));
+        await HospitalAPI.logActivity('patient_deleted', `Paziente eliminato ID: ${id}`);
+      },
+      getAllPatients: async () => {
+        const s = await getDocs(query(collection(db, 'patients'), orderBy('createdAt', 'desc')));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      searchPatients: async (searchTerm) => {
+        const all = await HospitalAPI.getAllPatients();
+        const term = searchTerm.toLowerCase();
+        return all.filter(p => 
+          (p.firstName || '').toLowerCase().includes(term) ||
+          (p.lastName || '').toLowerCase().includes(term) ||
+          (p.fiscalCode || '').toLowerCase().includes(term) ||
+          (p.phone || '').includes(term)
+        );
+      },
+      
+      // Appointments
+      addAppointment: async (apptData) => {
+        const docRef = await addDoc(collection(db, 'appointments'), {
+          ...apptData,
+          createdAt: serverTimestamp()
+        });
+        await HospitalAPI.logActivity('appointment_added', `Appuntamento creato: ${apptData.title}`);
+        return docRef;
+      },
+      updateAppointment: async (id, data) => {
+        await updateDoc(doc(db, 'appointments', id), data);
+        await HospitalAPI.logActivity('appointment_updated', `Appuntamento aggiornato ID: ${id}`);
+      },
+      deleteAppointment: async (id) => {
+        await deleteDoc(doc(db, 'appointments', id));
+        await HospitalAPI.logActivity('appointment_deleted', `Appuntamento eliminato ID: ${id}`);
+      },
+      getAllAppointments: async () => {
+        const s = await getDocs(collection(db, 'appointments'));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      
+      // Shifts (Turni)
+      addShift: async (shiftData) => {
+        const docRef = await addDoc(collection(db, 'shifts'), {
+          ...shiftData,
+          createdAt: serverTimestamp()
+        });
+        await HospitalAPI.logActivity('shift_added', `Turno creato per ${shiftData.staffName}`);
+        return docRef;
+      },
+      getShifts: async () => {
+        const s = await getDocs(query(collection(db, 'shifts'), orderBy('startTime', 'desc')));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      deleteShift: async (id) => {
+        await deleteDoc(doc(db, 'shifts', id));
+        await HospitalAPI.logActivity('shift_deleted', `Turno eliminato ID: ${id}`);
+      },
+      
+      // Medical Reports
+      addReport: async (reportData) => {
+        const docRef = await addDoc(collection(db, 'reports'), {
+          ...reportData,
+          createdAt: serverTimestamp()
+        });
+        await HospitalAPI.logActivity('report_added', `Referto creato per paziente ID: ${reportData.patientId}`);
+        return docRef;
+      },
+      getReports: async () => {
+        const s = await getDocs(query(collection(db, 'reports'), orderBy('createdAt', 'desc')));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      getPatientReports: async (patientId) => {
+        const s = await getDocs(query(collection(db, 'reports'), where('patientId', '==', patientId), orderBy('createdAt', 'desc')));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      
+      // Prescriptions
+      addPrescription: async (prescData) => {
+        const docRef = await addDoc(collection(db, 'prescriptions'), {
+          ...prescData,
+          createdAt: serverTimestamp()
+        });
+        await HospitalAPI.logActivity('prescription_added', `Prescrizione creata per paziente ID: ${prescData.patientId}`);
+        return docRef;
+      },
+      getPrescriptions: async () => {
+        const s = await getDocs(query(collection(db, 'prescriptions'), orderBy('createdAt', 'desc')));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      getPatientPrescriptions: async (patientId) => {
+        const s = await getDocs(query(collection(db, 'prescriptions'), where('patientId', '==', patientId), orderBy('createdAt', 'desc')));
+        return s.docs.map(d => ({ id: d.id, ...d.data() }));
+      },
+      
+      // Activity Log
+      logActivity: async (type, description) => {
+        if (!window.AppState.currentUser) return;
+        await addDoc(collection(db, 'activityLog'), {
+          type,
+          description,
+          userId: window.AppState.currentUser.uid,
+          userName: window.AppState.currentUser.name || window.AppState.currentUser.email,
+          timestamp: serverTimestamp()
+        });
+      },
+      getActivityLog: async (limit = 50) => {
+        const s = await getDocs(query(collection(db, 'activityLog'), orderBy('timestamp', 'desc')));
+        return s.docs.slice(0, limit).map(d => ({ id: d.id, ...d.data() }));
+      }
     };
 
-    // UI logic
-    document.addEventListener('DOMContentLoaded', ()=>{
-      const loginForm = document.getElementById('loginForm');
-      const registerForm = document.getElementById('registerForm');
-      const logoutBtn = document.getElementById('logoutBtn');
-
-      // Fill departments dropdowns
-      async function populateDepartments(){
-        const deps = await window.Prof.getDepartments();
-        const selects = document.querySelectorAll('.dept-select');
-        selects.forEach(s=>{ s.innerHTML = '<option value="">-- Seleziona reparto --</option>'; deps.forEach(d=>{ const o = document.createElement('option'); o.value = d.name; o.textContent = d.name; s.appendChild(o); }); });
+    // UI Utilities
+    window.UI = {
+      showNotification: (message, type = 'info') => {
+        const colors = {
+          success: 'bg-green-50 border-green-500 text-green-800',
+          error: 'bg-red-50 border-red-500 text-red-800',
+          warning: 'bg-yellow-50 border-yellow-500 text-yellow-800',
+          info: 'bg-blue-50 border-blue-500 text-blue-800'
+        };
+        const notif = document.createElement('div');
+        notif.className = `notification border-l-4 ${colors[type] || colors.info}`;
+        notif.textContent = message;
+        document.body.appendChild(notif);
+        setTimeout(() => notif.remove(), 4000);
+      },
+      
+      showModal: (title, content = '') => {
+        document.getElementById('modalTitle').textContent = title;
+        if (content) document.getElementById('modalBody').innerHTML = content;
+        document.getElementById('modal').classList.remove('hidden');
+        document.getElementById('modal').classList.add('flex');
+      },
+      
+      closeModal: () => {
+        document.getElementById('modal').classList.add('hidden');
+        document.getElementById('modal').classList.remove('flex');
+      },
+      
+      navigate: (pageId) => {
+        document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
+        document.getElementById(pageId).classList.remove('hidden');
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        document.querySelector(`[data-nav="${pageId}"]`)?.classList.add('active');
+      },
+      
+      formatDate: (date) => {
+        if (!date) return '';
+        const d = date.toDate ? date.toDate() : new Date(date);
+        return d.toLocaleDateString('it-IT', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      },
+      
+      formatDateTime: (date) => {
+        if (!date) return '';
+        const d = date.toDate ? date.toDate() : new Date(date);
+        return d.toLocaleString('it-IT', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      },
+      
+      escape: (str) => {
+        if (!str) return '';
+        return String(str).replace(/[&<>"']/g, m => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[m]));
+      },
+      
+      getTriageColor: (code) => {
+        const colors = {
+          'rosso': 'badge-red',
+          'giallo': 'badge-yellow',
+          'verde': 'badge-green',
+          'bianco': 'badge-white',
+          'azzurro': 'badge-blue'
+        };
+        return colors[code] || 'badge-white';
+      },
+      
+      getTriageBorder: (code) => {
+        const borders = {
+          'rosso': 'triage-red',
+          'giallo': 'triage-yellow',
+          'verde': 'triage-green',
+          'bianco': 'triage-white',
+          'azzurro': 'triage-blue'
+        };
+        return borders[code] || 'triage-white';
       }
+    };
 
-      populateDepartments();
+    // Page Loaders
+    window.Pages = {
+      loadDashboard: async () => {
+        const patients = await HospitalAPI.getAllPatients();
+        const appointments = await HospitalAPI.getAllAppointments();
+        const shifts = await HospitalAPI.getShifts();
+        
+        // Filter based on role
+        let visiblePatients = patients;
+        let visibleAppointments = appointments;
+        
+        if (window.AppState.currentUser.role !== 'admin') {
+          visiblePatients = patients.filter(p => 
+            p.createdBy === window.AppState.currentUser.uid || 
+            p.department === window.AppState.currentUser.department
+          );
+          visibleAppointments = appointments.filter(a => 
+            a.createdBy === window.AppState.currentUser.uid || 
+            a.department === window.AppState.currentUser.department
+          );
+        }
+        
+        // Stats
+        document.getElementById('statTotalPatients').textContent = visiblePatients.length;
+        
+        const today = new Date().toISOString().slice(0, 10);
+        const todayAppts = visibleAppointments.filter(a => (a.start || '').slice(0, 10) === today);
+        document.getElementById('statTodayAppointments').textContent = todayAppts.length;
+        
+        const activeShifts = shifts.filter(s => {
+          const start = new Date(s.startTime);
+          const end = new Date(s.endTime);
+          const now = new Date();
+          return now >= start && now <= end;
+        });
+        document.getElementById('statActiveStaff').textContent = activeShifts.length;
+        
+        const triagePatients = visiblePatients.filter(p => p.triageCode && p.triageStatus === 'in_attesa');
+        document.getElementById('statTriageQueue').textContent = triagePatients.length;
+        
+        // Charts
+        const departments = await HospitalAPI.getDepartments();
+        const deptNames = departments.map(d => d.name);
+        const deptCounts = deptNames.map(name => visiblePatients.filter(p => p.department === name).length);
+        UI.renderBarChart('chartPatientsDept', deptNames, deptCounts, 'Pazienti per Reparto');
+        
+        // Appointments next 7 days
+        const days = [];
+        const apptCounts = [];
+        for (let i = 0; i < 7; i++) {
+          const d = new Date();
+          d.setDate(d.getDate() + i);
+          const key = d.toISOString().slice(0, 10);
+          days.push(d.toLocaleDateString('it-IT', { month: 'short', day: 'numeric' }));
+          apptCounts.push(visibleAppointments.filter(a => (a.start || '').slice(0, 10) === key).length);
+        }
+        UI.renderLineChart('chartAppts7d', days, apptCounts, 'Appuntamenti Prossimi 7 Giorni');
+        
+        // Triage distribution
+        const triageCodes = ['rosso', 'giallo', 'verde', 'bianco', 'azzurro'];
+        const triageCounts = triageCodes.map(code => visiblePatients.filter(p => p.triageCode === code).length);
+        UI.renderDoughnutChart('chartTriage', triageCodes.map(c => c.charAt(0).toUpperCase() + c.slice(1)), triageCounts, 'Distribuzione Triage');
+        
+        // Recent patients
+        const recent = visiblePatients.slice(0, 5);
+        const recentHtml = recent.map(p => `
+          <div class="flex justify-between items-center py-2 border-b last:border-0">
+            <div>
+              <div class="font-medium">${UI.escape(p.firstName)} ${UI.escape(p.lastName)}</div>
+              <div class="text-xs text-gray-500">${UI.escape(p.department || 'N/A')} ${p.triageCode ? `<span class="badge ${UI.getTriageColor(p.triageCode)}">${p.triageCode.toUpperCase()}</span>` : ''}</div>
+            </div>
+            <div class="text-xs text-gray-400">${UI.formatDate(p.createdAt)}</div>
+          </div>
+        `).join('');
+        document.getElementById('recentPatients').innerHTML = recentHtml || '<div class="text-sm text-gray-500 text-center py-4">Nessun paziente recente</div>';
+        
+        // Activity log
+        const logs = await HospitalAPI.getActivityLog(10);
+        const logsHtml = logs.map(log => `
+          <div class="py-2 border-b last:border-0">
+            <div class="text-sm">${UI.escape(log.description)}</div>
+            <div class="text-xs text-gray-500">${UI.escape(log.userName)} - ${UI.formatDateTime(log.timestamp)}</div>
+          </div>
+        `).join('');
+        document.getElementById('activityLog').innerHTML = logsHtml || '<div class="text-sm text-gray-500 text-center py-4">Nessuna attività</div>';
+      },
+      
+      loadPatients: async () => {
+        const tbody = document.getElementById('patientsTbody');
+        tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-center">Caricamento...</td></tr>';
+        
+        const all = await HospitalAPI.getAllPatients();
+        let visible = all;
+        
+        if (window.AppState.currentUser.role !== 'admin') {
+          visible = all.filter(p => 
+            p.createdBy === window.AppState.currentUser.uid || 
+            p.department === window.AppState.currentUser.department
+          );
+        }
+        
+        if (!visible.length) {
+          tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-gray-500">Nessun paziente</td></tr>';
+          return;
+        }
+        
+        tbody.innerHTML = '';
+        visible.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+        
+        visible.forEach(p => {
+          const tr = document.createElement('tr');
+          tr.className = `border-b hover:bg-gray-50 ${UI.getTriageBorder(p.triageCode)}`;
+          tr.innerHTML = `
+            <td class="p-3">
+              <div class="font-medium">${UI.escape(p.firstName)} ${UI.escape(p.lastName)}</div>
+              <div class="text-xs text-gray-500">${UI.escape(p.fiscalCode || 'N/A')}</div>
+            </td>
+            <td class="p-3 text-sm">${UI.escape(p.birthDate || 'N/A')}</td>
+            <td class="p-3 text-sm">${UI.escape(p.phone || 'N/A')}</td>
+            <td class="p-3 text-sm">${UI.escape(p.department || 'N/A')}</td>
+            <td class="p-3">
+              ${p.triageCode ? `<span class="badge ${UI.getTriageColor(p.triageCode)}">${p.triageCode.toUpperCase()}</span>` : '<span class="text-gray-400 text-sm">-</span>'}
+            </td>
+            <td class="p-3 text-sm">${UI.escape(p.triageStatus || 'N/A')}</td>
+            <td class="p-3 text-xs text-gray-500">${UI.formatDate(p.createdAt)}</td>
+            <td class="p-3 text-right">
+              <button class="view-patient px-3 py-1 bg-blue-600 text-white rounded text-sm mr-1" data-id="${p.id}">Visualizza</button>
+              ${p.createdBy === window.AppState.currentUser.uid || window.AppState.currentUser.role === 'admin' ? `<button class="delete-patient px-3 py-1 bg-red-600 text-white rounded text-sm" data-id="${p.id}">Elimina</button>` : ''}
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+        
+        // Event listeners
+        document.querySelectorAll('.view-patient').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            const id = e.target.dataset.id;
+            await Pages.viewPatientDetail(id);
+          });
+        });
+        
+        document.querySelectorAll('.delete-patient').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            if (!confirm('Sei sicuro di voler eliminare questo paziente?')) return;
+            const id = e.target.dataset.id;
+            await HospitalAPI.deletePatient(id);
+            UI.showNotification('Paziente eliminato con successo', 'success');
+            await Pages.loadPatients();
+          });
+        });
+        
+        // Update patient select in forms
+        const selects = document.querySelectorAll('.patient-select');
+        selects.forEach(select => {
+          select.innerHTML = '<option value="">-- Seleziona Paziente --</option>';
+          visible.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.firstName} ${p.lastName} (${p.fiscalCode || 'N/A'})`;
+            select.appendChild(opt);
+          });
+        });
+      },
+      
+      viewPatientDetail: async (patientId) => {
+        const patient = (await HospitalAPI.getAllPatients()).find(p => p.id === patientId);
+        if (!patient) {
+          UI.showNotification('Paziente non trovato', 'error');
+          return;
+        }
+        
+        const reports = await HospitalAPI.getPatientReports(patientId);
+        const prescriptions = await HospitalAPI.getPatientPrescriptions(patientId);
+        
+        const content = `
+          <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-600">Nome Completo</label>
+                <div class="text-lg font-semibold">${UI.escape(patient.firstName)} ${UI.escape(patient.lastName)}</div>
+              </div>
+              <div>
+                <label class="text-sm font-medium text-gray-600">Codice Fiscale</label>
+                <div class="text-lg">${UI.escape(patient.fiscalCode || 'N/A')}</div>
+              </div>
+              <div>
+                <label class="text-sm font-medium text-gray-600">Data di Nascita</label>
+                <div>${UI.escape(patient.birthDate || 'N/A')}</div>
+              </div>
+              <div>
+                <label class="text-sm font-medium text-gray-600">Telefono</label>
+                <div>${UI.escape(patient.phone || 'N/A')}</div>
+              </div>
+              <div>
+                <label class="text-sm font-medium text-gray-600">Reparto</label>
+                <div>${UI.escape(patient.department || 'N/A')}</div>
+              </div>
+              <div>
+                <label class="text-sm font-medium text-gray-600">Triage</label>
+                <div>${patient.triageCode ? `<span class="badge ${UI.getTriageColor(patient.triageCode)}">${patient.triageCode.toUpperCase()}</span> - ${UI.escape(patient.triageStatus || '')}` : 'N/A'}</div>
+              </div>
+            </div>
+            
+            <div>
+              <label class="text-sm font-medium text-gray-600">Storia Clinica</label>
+              <div class="bg-gray-50 p-3 rounded mt-1">${UI.escape(patient.clinicalHistory || 'Nessuna informazione')}</div>
+            </div>
+            
+            <div>
+              <label class="text-sm font-medium text-gray-600">Patologie</label>
+              <div class="bg-gray-50 p-3 rounded mt-1">${UI.escape(patient.pathologies || 'Nessuna')}</div>
+            </div>
+            
+            <div>
+              <label class="text-sm font-medium text-gray-600">Farmaci Attuali</label>
+              <div class="bg-gray-50 p-3 rounded mt-1">${UI.escape(patient.medications || 'Nessuno')}</div>
+            </div>
+            
+            <div class="border-t pt-4">
+              <h4 class="font-semibold mb-2">Referti Medici (${reports.length})</h4>
+              ${reports.length ? reports.map(r => `
+                <div class="bg-gray-50 p-3 rounded mb-2">
+                  <div class="font-medium">${UI.escape(r.title)}</div>
+                  <div class="text-sm text-gray-600">${UI.escape(r.diagnosis || '')}</div>
+                  <div class="text-xs text-gray-400 mt-1">Dr. ${UI.escape(r.doctorName)} - ${UI.formatDate(r.createdAt)}</div>
+                </div>
+              `).join('') : '<div class="text-sm text-gray-500">Nessun referto</div>'}
+            </div>
+            
+            <div class="border-t pt-4">
+              <h4 class="font-semibold mb-2">Prescrizioni (${prescriptions.length})</h4>
+              ${prescriptions.length ? prescriptions.map(pr => `
+                <div class="bg-gray-50 p-3 rounded mb-2">
+                  <div class="font-medium">${UI.escape(pr.medication)}</div>
+                  <div class="text-sm text-gray-600">Dosaggio: ${UI.escape(pr.dosage)} - ${UI.escape(pr.frequency)}</div>
+                  <div class="text-xs text-gray-400 mt-1">Dr. ${UI.escape(pr.doctorName)} - ${UI.formatDate(pr.createdAt)}</div>
+                </div>
+              `).join('') : '<div class="text-sm text-gray-500">Nessuna prescrizione</div>'}
+            </div>
+            
+            <div class="flex gap-2 pt-4">
+              <button onclick="Pages.editPatient('${patientId}')" class="btn-primary">Modifica Dati</button>
+              <button onclick="Pages.addReport('${patientId}')" class="btn-primary">Nuovo Referto</button>
+              <button onclick="Pages.addPrescription('${patientId}')" class="btn-primary">Nuova Prescrizione</button>
+              <button onclick="Pages.exportPatientPDF('${patientId}')" class="btn-secondary">Esporta PDF</button>
+            </div>
+          </div>
+        `;
+        
+        UI.showModal(`Scheda Paziente: ${patient.firstName} ${patient.lastName}`, content);
+      },
+      
+      editPatient: async (patientId) => {
+        const patient = (await HospitalAPI.getAllPatients()).find(p => p.id === patientId);
+        if (!patient) return;
+        
+        UI.closeModal();
+        
+        const form = document.getElementById('patientForm');
+        form.firstName.value = patient.firstName || '';
+        form.lastName.value = patient.lastName || '';
+        form.fiscalCode.value = patient.fiscalCode || '';
+        form.birthDate.value = patient.birthDate || '';
+        form.phone.value = patient.phone || '';
+        form.email.value = patient.email || '';
+        form.address.value = patient.address || '';
+        form.height.value = patient.height || '';
+        form.weight.value = patient.weight || '';
+        form.bloodType.value = patient.bloodType || '';
+        form.department.value = patient.department || '';
+        form.triageCode.value = patient.triageCode || '';
+        form.triageStatus.value = patient.triageStatus || '';
+        form.clinicalHistory.value = patient.clinicalHistory || '';
+        form.pathologies.value = patient.pathologies || '';
+        form.medications.value = patient.medications || '';
+        form.allergies.value = patient.allergies || '';
+        form.dataset.editId = patientId;
+        
+        UI.showModal('Modifica Paziente');
+      },
+      
+      addReport: async (patientId) => {
+        UI.closeModal();
+        const form = document.getElementById('reportForm');
+        form.reset();
+        form.patientId.value = patientId;
+        UI.showModal('Nuovo Referto Medico');
+      },
+      
+      addPrescription: async (patientId) => {
+        UI.closeModal();
+        const form = document.getElementById('prescriptionForm');
+        form.reset();
+        form.patientId.value = patientId;
+        UI.showModal('Nuova Prescrizione');
+      },
+      
+      exportPatientPDF: async (patientId) => {
+        const patient = (await HospitalAPI.getAllPatients()).find(p => p.id === patientId);
+        if (!patient) return;
+        
+        const reports = await HospitalAPI.getPatientReports(patientId);
+        const prescriptions = await HospitalAPI.getPatientPrescriptions(patientId);
+        
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        
+        doc.setFontSize(18);
+        doc.text('CARTELLA CLINICA', 105, 20, { align: 'center' });
+        
+        doc.setFontSize(12);
+        let y = 40;
+        doc.text(`Nome: ${patient.firstName} ${patient.lastName}`, 20, y);
+        y += 10;
+        doc.text(`Codice Fiscale: ${patient.fiscalCode || 'N/A'}`, 20, y);
+        y += 10;
+        doc.text(`Data di Nascita: ${patient.birthDate || 'N/A'}`, 20, y);
+        y += 10;
+        doc.text(`Telefono: ${patient.phone || 'N/A'}`, 20, y);
+        y += 10;
+        doc.text(`Reparto: ${patient.department || 'N/A'}`, 20, y);
+        y += 15;
+        
+        doc.setFontSize(14);
+        doc.text('Storia Clinica:', 20, y);
+        y += 7;
+        doc.setFontSize(10);
+        const historyLines = doc.splitTextToSize(patient.clinicalHistory || 'Nessuna informazione', 170);
+        doc.text(historyLines, 20, y);
+        y += historyLines.length * 5 + 10;
+        
+        if (reports.length) {
+          doc.setFontSize(14);
+          doc.text('Referti Medici:', 20, y);
+          y += 7;
+          doc.setFontSize(10);
+          reports.forEach(r => {
+            doc.text(`- ${r.title} (${UI.formatDate(r.createdAt)})`, 20, y);
+            y += 5;
+          });
+          y += 5;
+        }
+        
+        if (prescriptions.length) {
+          doc.setFontSize(14);
+          doc.text('Prescrizioni:', 20, y);
+          y += 7;
+          doc.setFontSize(10);
+          prescriptions.forEach(pr => {
+            doc.text(`- ${pr.medication} - ${pr.dosage} (${UI.formatDate(pr.createdAt)})`, 20, y);
+            y += 5;
+          });
+        }
+        
+        doc.save(`cartella_${patient.lastName}_${patient.firstName}.pdf`);
+        UI.showNotification('PDF generato con successo', 'success');
+      },
+      
+      loadAppointments: async () => {
+        const calendarEl = document.getElementById('calendar');
+        calendarEl.innerHTML = '';
+        
+        const all = await HospitalAPI.getAllAppointments();
+        let visible = all;
+        
+        if (window.AppState.currentUser.role !== 'admin') {
+          visible = all.filter(a => 
+            a.createdBy === window.AppState.currentUser.uid || 
+            a.department === window.AppState.currentUser.department
+          );
+        }
+        
+        const events = visible.map(a => ({
+          id: a.id,
+          title: a.title,
+          start: a.start,
+          end: a.end || a.start,
+          backgroundColor: a.type === 'urgente' ? '#ef4444' : '#3b82f6'
+        }));
+        
+        const calendar = new FullCalendar.Calendar(calendarEl, {
+          initialView: 'dayGridMonth',
+          locale: 'it',
+          headerToolbar: {
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,timeGridDay'
+          },
+          events: events,
+          eventClick: (info) => {
+            const appt = visible.find(a => a.id === info.event.id);
+            if (appt) {
+              const content = `
+                <div class="space-y-3">
+                  <div><strong>Titolo:</strong> ${UI.escape(appt.title)}</div>
+                  <div><strong>Paziente:</strong> ${UI.escape(appt.patientName || 'N/A')}</div>
+                  <div><strong>Inizio:</strong> ${UI.formatDateTime(appt.start)}</div>
+                  <div><strong>Fine:</strong> ${UI.formatDateTime(appt.end || appt.start)}</div>
+                  <div><strong>Note:</strong> ${UI.escape(appt.notes || 'Nessuna nota')}</div>
+                  <div class="pt-3">
+                    <button onclick="HospitalAPI.deleteAppointment('${appt.id}').then(() => { UI.closeModal(); Pages.loadAppointments(); UI.showNotification('Appuntamento eliminato', 'success'); })" class="btn-danger">Elimina Appuntamento</button>
+                  </div>
+                </div>
+              `;
+              UI.showModal('Dettagli Appuntamento', content);
+            }
+          }
+        });
+        
+        calendar.render();
+      },
+      
+      loadShifts: async () => {
+        const tbody = document.getElementById('shiftsTbody');
+        tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center">Caricamento...</td></tr>';
+        
+        const shifts = await HospitalAPI.getShifts();
+        
+        if (!shifts.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">Nessun turno programmato</td></tr>';
+          return;
+        }
+        
+        tbody.innerHTML = '';
+        
+        shifts.forEach(s => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50';
+          
+          const now = new Date();
+          const start = new Date(s.startTime);
+          const end = new Date(s.endTime);
+          const isActive = now >= start && now <= end;
+          
+          tr.innerHTML = `
+            <td class="p-3 font-medium">${UI.escape(s.staffName)}</td>
+            <td class="p-3 text-sm">${UI.escape(s.role)}</td>
+            <td class="p-3 text-sm">${UI.escape(s.department)}</td>
+            <td class="p-3 text-sm">${UI.formatDateTime(s.startTime)}</td>
+            <td class="p-3 text-sm">${UI.formatDateTime(s.endTime)}</td>
+            <td class="p-3">
+              ${isActive ? '<span class="badge badge-green">In Servizio</span>' : '<span class="badge badge-white">Programmato</span>'}
+            </td>
+            <td class="p-3 text-right">
+              ${window.AppState.currentUser.role === 'admin' ? `<button class="delete-shift px-3 py-1 bg-red-600 text-white rounded text-sm" data-id="${s.id}">Elimina</button>` : ''}
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+        
+        document.querySelectorAll('.delete-shift').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            if (!confirm('Eliminare questo turno?')) return;
+            await HospitalAPI.deleteShift(e.target.dataset.id);
+            UI.showNotification('Turno eliminato', 'success');
+            await Pages.loadShifts();
+          });
+        });
+      },
+      
+      loadReports: async () => {
+        const tbody = document.getElementById('reportsTbody');
+        tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center">Caricamento...</td></tr>';
+        
+        const reports = await HospitalAPI.getReports();
+        
+        if (!reports.length) {
+          tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">Nessun referto</td></tr>';
+          return;
+        }
+        
+        tbody.innerHTML = '';
+        
+        reports.forEach(r => {
+          const tr = document.createElement('tr');
+          tr.className = 'border-b hover:bg-gray-50';
+          tr.innerHTML = `
+            <td class="p-3 font-medium">${UI.escape(r.title)}</td>
+            <td class="p-3 text-sm">${UI.escape(r.patientName || 'N/A')}</td>
+            <td class="p-3 text-sm">${UI.escape(r.doctorName)}</td>
+            <td class="p-3 text-sm">${UI.escape(r.diagnosis || 'N/A')}</td>
+            <td class="p-3 text-sm">${UI.formatDate(r.createdAt)}</td>
+            <td class="p-3 text-right">
+              <button class="view-report px-3 py-1 bg-blue-600 text-white rounded text-sm" data-id="${r.id}">Visualizza</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+        
+        document.querySelectorAll('.view-report').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            const report = reports.find(r => r.id === e.target.dataset.id);
+            if (report) {
+              const content = `
+                <div class="space-y-3">
+                  <div><strong>Titolo:</strong> ${UI.escape(report.title)}</div>
+                  <div><strong>Paziente:</strong> ${UI.escape(report.patientName || 'N/A')}</div>
+                  <div><strong>Medico:</strong> ${UI.escape(report.doctorName)}</div>
+                  <div><strong>Data:</strong> ${UI.formatDate(report.createdAt)}</div>
+                  <div><strong>Diagnosi:</strong><br>${UI.escape(report.diagnosis || 'N/A')}</div>
+                  <div><strong>Trattamento:</strong><br>${UI.escape(report.treatment || 'N/A')}</div>
+                  <div><strong>Note:</strong><br>${UI.escape(report.notes || 'Nessuna nota')}</div>
+                </div>
+              `;
+              UI.showModal('Referto Medico', content);
+            }
+          });
+        });
+      },
+      
+      loadSettings: async () => {
+        // Departments list
+        const departments = await HospitalAPI.getDepartments();
+        const deptList = document.getElementById('departmentsList');
+        deptList.innerHTML = departments.map(d => `
+          <div class="flex justify-between items-center p-3 border-b">
+            <div>
+              <div class="font-medium">${UI.escape(d.name)}</div>
+              <div class="text-sm text-gray-500">${UI.escape(d.description || '')}</div>
+            </div>
+          </div>
+        `).join('') || '<div class="p-4 text-center text-gray-500">Nessun reparto</div>';
+        
+        // Users list (admin only)
+        if (window.AppState.currentUser.role === 'admin') {
+          const users = await HospitalAPI.getAllUsers();
+          const usersList = document.getElementById('usersList');
+          usersList.innerHTML = users.map(u => `
+            <div class="flex justify-between items-center p-3 border-b">
+              <div>
+                <div class="font-medium">${UI.escape(u.name || u.email)}</div>
+                <div class="text-sm text-gray-500">${UI.escape(u.role)} - ${UI.escape(u.department || 'N/A')}</div>
+              </div>
+              <span class="badge badge-blue">${UI.escape(u.role)}</span>
+            </div>
+          `).join('');
+        }
+      }
+    };
 
-      // Register
-      registerForm.addEventListener('submit', async (e)=>{
-        e.preventDefault();
-        const name = e.target.name.value, email = e.target.email.value, pass = e.target.password.value, dept = e.target.department.value;
-        try{ await window.Prof.register(email,pass,name,dept); alert('Registrazione ok. Effettua il login.'); registerForm.reset(); populateDepartments(); }
-        catch(err){ alert('Errore registrazione: '+err.message); }
+    // Chart rendering
+    let chartInstances = {};
+    
+    UI.renderBarChart = (canvasId, labels, data, label) => {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx) return;
+      if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
+      chartInstances[canvasId] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: label,
+            data: data,
+            backgroundColor: '#3b82f6',
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          }
+        }
       });
-
-      // Login
-      loginForm.addEventListener('submit', async (e)=>{
-        e.preventDefault();
-        const email = e.target.email.value, pass = e.target.password.value;
-        try{ await window.Prof.login(email,pass); loginForm.reset(); }
-        catch(err){ alert('Errore login: '+err.message); }
+    };
+    
+    UI.renderLineChart = (canvasId, labels, data, label) => {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx) return;
+      if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
+      chartInstances[canvasId] = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: label,
+            data: data,
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            tension: 0.4,
+            fill: true
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          }
+        }
       });
+    };
+    
+    UI.renderDoughnutChart = (canvasId, labels, data, label) => {
+      const ctx = document.getElementById(canvasId);
+      if (!ctx) return;
+      if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
+      chartInstances[canvasId] = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: label,
+            data: data,
+            backgroundColor: ['#dc2626', '#eab308', '#16a34a', '#9ca3af', '#3b82f6']
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false
+        }
+      });
+    };
 
-      // Logout
-      logoutBtn.addEventListener('click', async ()=>{ await window.Prof.logout(); });
-
-      // Navigation
-      document.querySelectorAll('[data-nav]').forEach(b=> b.addEventListener('click', async (ev)=>{
-        ev.preventDefault(); const target = b.dataset.nav; document.querySelectorAll('.page').forEach(p=>p.classList.add('hidden')); document.getElementById(target).classList.remove('hidden'); document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('bg-sky-600','text-white')); b.classList.add('bg-sky-600','text-white');
-        // load content per page
-        if (target==='pageDashboard') await loadDashboard();
-        if (target==='pagePatients') await loadPatients();
-        if (target==='pageAppointments') await renderCalendar();
-        if (target==='pageSettings') await loadSettings();
-      }));
-
+    // Initialize app
+    document.addEventListener('DOMContentLoaded', async () => {
+      // Initialize default departments
+      await HospitalAPI.initializeDefaultDepartments();
+      
+      // Populate departments in forms
+      const populateDepartments = async () => {
+        const deps = await HospitalAPI.getDepartments();
+        document.querySelectorAll('.dept-select').forEach(select => {
+          select.innerHTML = '<option value="">-- Seleziona Reparto --</option>';
+          deps.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.name;
+            opt.textContent = d.name;
+            select.appendChild(opt);
+          });
+        });
+      };
+      
+      await populateDepartments();
+      
       // Auth state
-      onAuthStateChanged(auth, async (user)=>{
-        if (user){
-          const userDoc = await window.Prof.getUserDoc(user.uid);
-          window.currentUser = userDoc || { uid: user.uid, email: user.email, role: 'medico' };
+      onAuthStateChanged(auth, async (user) => {
+        if (user) {
+          const userDoc = await HospitalAPI.getUserDoc(user.uid);
+          window.AppState.currentUser = userDoc || { uid: user.uid, email: user.email, role: 'medico' };
+          
           document.getElementById('authArea').classList.add('hidden');
           document.getElementById('appArea').classList.remove('hidden');
-          document.getElementById('userDisplay').textContent = (window.currentUser.name||user.email) + (window.currentUser.department? ' — '+window.currentUser.department : '');
-          // default nav
-          document.querySelector('[data-nav="pageDashboard"]').click();
+          
+          document.getElementById('userDisplay').innerHTML = `
+            <div class="font-medium">${UI.escape(window.AppState.currentUser.name || user.email)}</div>
+            <div class="text-xs text-blue-200">${UI.escape(window.AppState.currentUser.role)} ${window.AppState.currentUser.department ? '- ' + UI.escape(window.AppState.currentUser.department) : ''}</div>
+          `;
+          
+          // Show/hide admin sections
+          if (window.AppState.currentUser.role !== 'admin') {
+            document.querySelectorAll('.admin-only').forEach(el => el.classList.add('hidden'));
+          }
+          
+          // Default page
+          UI.navigate('pageDashboard');
+          await Pages.loadDashboard();
           await populateDepartments();
         } else {
           document.getElementById('authArea').classList.remove('hidden');
           document.getElementById('appArea').classList.add('hidden');
         }
       });
-
+      
+      // Navigation
+      document.querySelectorAll('[data-nav]').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.preventDefault();
+          const target = btn.dataset.nav;
+          UI.navigate(target);
+          
+          if (target === 'pageDashboard') await Pages.loadDashboard();
+          if (target === 'pagePatients') await Pages.loadPatients();
+          if (target === 'pageAppointments') await Pages.loadAppointments();
+          if (target === 'pageShifts') await Pages.loadShifts();
+          if (target === 'pageReports') await Pages.loadReports();
+          if (target === 'pageSettings') await Pages.loadSettings();
+        });
+      });
+      
+      // Login form
+      document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const email = e.target.email.value;
+        const pass = e.target.password.value;
+        try {
+          await HospitalAPI.login(email, pass);
+          e.target.reset();
+          UI.showNotification('Accesso effettuato con successo', 'success');
+        } catch (err) {
+          UI.showNotification('Errore: ' + err.message, 'error');
+        }
+      });
+      
+      // Register form
+      document.getElementById('registerForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = e.target.name.value;
+        const email = e.target.email.value;
+        const pass = e.target.password.value;
+        const department = e.target.department.value;
+        const role = e.target.role.value;
+        
+        try {
+          await HospitalAPI.register(email, pass, { name, department, role });
+          e.target.reset();
+          UI.showNotification('Registrazione completata. Effettua il login.', 'success');
+          await populateDepartments();
+        } catch (err) {
+          UI.showNotification('Errore: ' + err.message, 'error');
+        }
+      });
+      
+      // Logout
+      document.getElementById('logoutBtn').addEventListener('click', async () => {
+        await HospitalAPI.logout();
+        UI.showNotification('Logout effettuato', 'info');
+      });
+      
       // Patient form
-      document.getElementById('patientForm').addEventListener('submit', async (e)=>{
-        e.preventDefault(); const f = e.target;
-        const patient = {
-          firstName: f.firstName.value, lastName: f.lastName.value,
-          birthDate: f.birthDate.value, phone: f.phone.value,
-          height: f.height.value, weight: f.weight.value,
-          clinicalHistory: f.clinicalHistory.value, medications: f.medications.value,
-          pathologies: f.pathologies.value, department: f.department.value || (window.currentUser && window.currentUser.department) || '',
-          createdBy: window.currentUser.uid || null, createdAt: new Date().toISOString()
+      document.getElementById('patientForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        
+        const patientData = {
+          firstName: form.firstName.value,
+          lastName: form.lastName.value,
+          fiscalCode: form.fiscalCode.value,
+          birthDate: form.birthDate.value,
+          phone: form.phone.value,
+          email: form.email.value,
+          address: form.address.value,
+          height: form.height.value,
+          weight: form.weight.value,
+          bloodType: form.bloodType.value,
+          department: form.department.value,
+          triageCode: form.triageCode.value,
+          triageStatus: form.triageStatus.value,
+          clinicalHistory: form.clinicalHistory.value,
+          pathologies: form.pathologies.value,
+          medications: form.medications.value,
+          allergies: form.allergies.value,
+          createdBy: window.AppState.currentUser.uid
         };
-        try{
-          if (f.dataset.editId) { await window.Prof.updatePatient(f.dataset.editId, patient); delete f.dataset.editId; alert('Paziente aggiornato'); }
-          else await window.Prof.addPatient(patient);
-          f.reset(); closeModal(); await loadPatients();
-        } catch(err){ alert('Errore: '+err.message); }
+        
+        try {
+          if (form.dataset.editId) {
+            await HospitalAPI.updatePatient(form.dataset.editId, patientData);
+            delete form.dataset.editId;
+            UI.showNotification('Paziente aggiornato', 'success');
+          } else {
+            await HospitalAPI.addPatient(patientData);
+            UI.showNotification('Paziente aggiunto', 'success');
+          }
+          form.reset();
+          UI.closeModal();
+          await Pages.loadPatients();
+        } catch (err) {
+          UI.showNotification('Errore: ' + err.message, 'error');
+        }
       });
-
+      
       // Appointment form
-      document.getElementById('appointmentForm').addEventListener('submit', async (e)=>{
-        e.preventDefault(); const f = e.target;
-        const appt = { title: f.title.value, patientId: f.patientId.value, start: f.start.value, end: f.end.value || f.start.value, notes: f.notes.value, createdBy: window.currentUser.uid, department: window.currentUser.department || '' };
-        try{ await window.Prof.addAppointment(appt); f.reset(); alert('Appuntamento creato'); await renderCalendar(); }
-        catch(err){ alert('Errore: '+err.message); }
+      document.getElementById('appointmentForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        
+        const patientId = form.patientId.value;
+        const patients = await HospitalAPI.getAllPatients();
+        const patient = patients.find(p => p.id === patientId);
+        
+        const apptData = {
+          title: form.title.value,
+          patientId: patientId,
+          patientName: patient ? `${patient.firstName} ${patient.lastName}` : '',
+          start: form.start.value,
+          end: form.end.value || form.start.value,
+          type: form.type.value,
+          notes: form.notes.value,
+          createdBy: window.AppState.currentUser.uid,
+          department: window.AppState.currentUser.department || ''
+        };
+        
+        try {
+          await HospitalAPI.addAppointment(apptData);
+          form.reset();
+          UI.showNotification('Appuntamento creato', 'success');
+          await Pages.loadAppointments();
+        } catch (err) {
+          UI.showNotification('Errore: ' + err.message, 'error');
+        }
       });
-
-      // Department add (settings)
-      document.getElementById('addDeptForm').addEventListener('submit', async (e)=>{
-        e.preventDefault(); const name = e.target.deptName.value; try{ await window.Prof.addDepartment(name); e.target.reset(); alert('Reparto aggiunto'); await loadSettings(); await populateDepartments(); } catch(err){ alert('Errore: '+err.message); }
+      
+      // Shift form
+      document.getElementById('shiftForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        
+        const shiftData = {
+          staffName: form.staffName.value,
+          role: form.role.value,
+          department: form.department.value,
+          startTime: form.startTime.value,
+          endTime: form.endTime.value
+        };
+        
+        try {
+          await HospitalAPI.addShift(shiftData);
+          form.reset();
+          UI.showNotification('Turno programmato', 'success');
+          await Pages.loadShifts();
+        } catch (err) {
+          UI.showNotification('Errore: ' + err.message, 'error');
+        }
       });
-
-    }); // DOMContentLoaded
-
-    // ---------------- Data loaders ----------------
-    async function loadPatients(){
-      const tbody = document.getElementById('patientsTbody'); tbody.innerHTML = '<tr><td colspan="6" class="p-4">Caricamento...</td></tr>';
-      const all = await window.Prof.getAllPatients();
-      // Filter based on role: admin sees all; medico sees createdBy=uid OR department==user.department
-      let visible = all;
-      if (window.currentUser && window.currentUser.role !== 'admin'){
-        visible = all.filter(p => p.createdBy === window.currentUser.uid || p.department === window.currentUser.department);
-      }
-      if (!visible.length){ tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center">Nessun paziente visibile</td></tr>'; return; }
-      tbody.innerHTML = '';
-      visible.sort((a,b)=> (a.lastName||'').localeCompare(b.lastName||''));
-      visible.forEach(p=>{
-        const tr = document.createElement('tr'); tr.className='border-b';
-        tr.innerHTML = `
-          <td class="p-2">${escape(p.firstName)}</td>
-          <td class="p-2">${escape(p.lastName)}</td>
-          <td class="p-2">${escape(p.birthDate||'')}</td>
-          <td class="p-2">${escape(p.phone||'')}</td>
-          <td class="p-2">${escape(p.pathologies||'')}</td>
-          <td class="p-2 text-right">
-            <button class="open-px px-2 py-1 bg-sky-600 text-white rounded text-sm" data-id="${p.id}">Apri</button>
-            ${p.createdBy === (window.currentUser && window.currentUser.uid) ? `<button class="del-px ml-2 px-2 py-1 bg-red-600 text-white rounded text-sm" data-id="${p.id}">Elimina</button>` : ''}
-          </td>
-        `;
-        tbody.appendChild(tr);
+      
+      // Report form
+      document.getElementById('reportForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        
+        const patientId = form.patientId.value;
+        const patients = await HospitalAPI.getAllPatients();
+        const patient = patients.find(p => p.id === patientId);
+        
+        const reportData = {
+          title: form.title.value,
+          patientId: patientId,
+          patientName: patient ? `${patient.firstName} ${patient.lastName}` : '',
+          diagnosis: form.diagnosis.value,
+          treatment: form.treatment.value,
+          notes: form.notes.value,
+          doctorName: window.AppState.currentUser.name || window.AppState.currentUser.email
+        };
+        
+        try {
+          await HospitalAPI.addReport(reportData);
+          form.reset();
+          UI.showNotification('Referto salvato', 'success');
+          UI.closeModal();
+          await Pages.loadReports();
+        } catch (err) {
+          UI.showNotification('Errore: ' + err.message, 'error');
+        }
       });
-
-      document.querySelectorAll('.open-px').forEach(b=> b.addEventListener('click', async (ev)=>{
-        const id = ev.currentTarget.dataset.id; const d = await getDocData('patients', id); if (!d) return alert('Non trovato'); populatePatientModal(d, id); showModal('Scheda Paziente');
-      }));
-      document.querySelectorAll('.del-px').forEach(b=> b.addEventListener('click', async (ev)=>{ const id=ev.currentTarget.dataset.id; if (!confirm('Elimina paziente?')) return; await window.Prof.deletePatient(id); await loadPatients(); }));
-
-      // fill appointment patient selects
-      const opts = document.querySelectorAll('.patient-select'); opts.forEach(s=>{ s.innerHTML = '<option value="">-- Seleziona paziente --</option>'; visible.forEach(p=>{ const o=document.createElement('option'); o.value=p.id; o.textContent = p.firstName+' '+p.lastName; s.appendChild(o); }); });
-
-      // update dashboard lists
-      const latest = visible.slice(0,5).map(p=> `<div class=\"py-1\">${escape(p.firstName)} ${escape(p.lastName)} <span class=\"text-xs text-gray-500\">${escape(p.department||'')}</span></div>`).join(''); document.getElementById('latestPatients').innerHTML = latest || '<div class="text-sm text-gray-500">Nessun paziente</div>';
-    }
-
-    async function getDocData(col,id){ try{ const d = await getDoc(doc(db,col,id)); if (!d.exists()) return null; return { id:d.id, ...d.data() }; } catch(e){ console.error(e); return null; } }
-
-    function populatePatientModal(d,id){ const f=document.getElementById('patientForm'); f.firstName.value = d.firstName||''; f.lastName.value = d.lastName||''; f.birthDate.value = d.birthDate||''; f.phone.value = d.phone||''; f.height.value = d.height||''; f.weight.value = d.weight||''; f.clinicalHistory.value = d.clinicalHistory||''; f.medications.value = d.medications||''; f.pathologies.value = d.pathologies||''; f.department.value = d.department||''; f.dataset.editId = id; }
-
-    // ---------------- Calendar ----------------
-    let calendar;
-    async function renderCalendar(){
-      const el = document.getElementById('calendar'); el.innerHTML = '';
-      const all = await window.Prof.getAllAppointments();
-      let visible = all;
-      if (window.currentUser && window.currentUser.role !== 'admin') visible = all.filter(a => a.createdBy === window.currentUser.uid || a.department === window.currentUser.department);
-      const evs = visible.map(a=>({ id:a.id, title: a.title + (a.patientName? ' — '+a.patientName : ''), start: a.start, end: a.end }));
-      calendar = new FullCalendar.Calendar(el, { initialView: 'dayGridMonth', headerToolbar: { left:'prev,next today', center:'title', right:'dayGridMonth,timeGridWeek,timeGridDay'}, events: evs, eventClick: info=>{ showModal(`<div class=\"p-2\"><strong>${escape(info.event.title)}</strong><div class=\"text-sm text-gray-600\">${escape(info.event.start?.toISOString().replace('T',' ').slice(0,19)||'')}</div></div>`); } });
-      calendar.render();
-    }
-
-    // ---------------- Dashboard ----------------
-    async function loadDashboard(){
-      // stats: patients count visible, appointments today, upcoming 7 days chart, patients per department chart
-      const patients = await window.Prof.getAllPatients();
-      let visiblePatients = patients;
-      if (window.currentUser && window.currentUser.role !== 'admin') visiblePatients = patients.filter(p => p.createdBy === window.currentUser.uid || p.department === window.currentUser.department);
-      document.getElementById('statPatients').textContent = visiblePatients.length;
-
-      const appts = await window.Prof.getAllAppointments();
-      let visibleAppts = appts;
-      if (window.currentUser && window.currentUser.role !== 'admin') visibleAppts = appts.filter(a => a.createdBy === window.currentUser.uid || a.department === window.currentUser.department);
-      const today = new Date().toISOString().slice(0,10);
-      const todayCount = visibleAppts.filter(a => (a.start||'').slice(0,10)===today).length;
-      document.getElementById('statToday').textContent = todayCount;
-
-      // patients per department
-      const deps = await window.Prof.getDepartments();
-      const depNames = deps.map(d=>d.name);
-      const counts = depNames.map(n => visiblePatients.filter(p => p.department === n).length);
-      renderBarChart('chartPatientsDept', depNames, counts, 'Pazienti per reparto');
-
-      // appointments next 7 days
-      const days = []; const apptsCount = [];
-      for (let i=0;i<7;i++){ const dt = new Date(); dt.setDate(dt.getDate()+i); const key = dt.toISOString().slice(0,10); days.push(key); apptsCount.push(visibleAppts.filter(a => (a.start||'').slice(0,10)===key).length); }
-      renderLineChart('chartAppts7d', days, apptsCount, 'Appuntamenti prossimi 7 giorni');
-
-      // latest patients
-      const latest = visiblePatients.slice().sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,5);
-      document.getElementById('latestPatients').innerHTML = latest.map(p=> `<div class=\"py-1\">${escape(p.firstName)} ${escape(p.lastName)} <span class=\"text-xs text-gray-500\">${escape(p.department||'')}</span></div>`).join('') || '<div class="text-sm text-gray-500">Nessun paziente</div>';
-    }
-
-    // ---------------- Settings ----------------
-    async function loadSettings(){
-      const list = document.getElementById('departmentsList'); list.innerHTML = 'Caricamento...';
-      const deps = await window.Prof.getDepartments(); list.innerHTML = '';
-      deps.forEach(d=>{ const div = document.createElement('div'); div.className='p-2 border-b flex justify-between items-center'; div.innerHTML = `<div>${escape(d.name)}</div>`; list.appendChild(div); });
-      // only admins can add departments - UI already hides form if not admin
-      if (window.currentUser && window.currentUser.role !== 'admin') document.getElementById('addDeptCard').classList.add('hidden'); else document.getElementById('addDeptCard').classList.remove('hidden');
-    }
-
-    // ---------------- Charts ----------------
-    let charts = {};
-    function renderBarChart(canvasId, labels, data, label){ const ctx = document.getElementById(canvasId); if (!ctx) return; if (charts[canvasId]) charts[canvasId].destroy(); charts[canvasId] = new Chart(ctx, { type:'bar', data:{ labels, datasets:[{ label, data }] }, options:{ responsive:true } }); }
-    function renderLineChart(canvasId, labels, data, label){ const ctx = document.getElementById(canvasId); if (!ctx) return; if (charts[canvasId]) charts[canvasId].destroy(); charts[canvasId] = new Chart(ctx, { type:'line', data:{ labels, datasets:[{ label, data, tension:0.3 }] }, options:{ responsive:true } }); }
-
-    // ---------------- Modal ----------------
-    function showModal(title){ document.getElementById('modalTitle').textContent = title; document.getElementById('modal').classList.remove('hidden'); }
-    function closeModal(){ document.getElementById('modal').classList.add('hidden'); document.getElementById('modalBody').scrollTop = 0; }
-
-    // ---------------- Utils ----------------
-    function escape(s){ if (!s) return ''; return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-    window.loadPatients = loadPatients; window.renderCalendar = renderCalendar; window.loadDashboard = loadDashboard; window.loadSettings = loadSettings; window.closeModal = closeModal;
-
+      
+      // Prescription form
+      document.getElementById('prescriptionForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        
+        const patientId = form.patientId.value;
+        const patients = await HospitalAPI.getAllPatients();
+        const patient = patients.find(p => p.id === patientId);
+        
+        const prescData = {
+          patientId: patientId,
+          patientName: patient ? `${patient.firstName} ${patient.lastName}` : '',
+          medication: form.medication.value,
+          dosage: form.dosage.value,
+          frequency: form.frequency.value,
+          duration: form.duration.value,
+          notes: form.notes.value,
+          doctorName: window.AppState.currentUser.name || window.AppState.currentUser.email
+        };
+        
+        try {
+          await HospitalAPI.addPrescription(prescData);
+          form.reset();
+          UI.showNotification('Prescrizione salvata', 'success');
+          UI.closeModal();
+        } catch (err) {
+          UI.showNotification('Errore: ' + err.message, 'error');
+        }
+      });
+      
+      // Department form
+      document.getElementById('departmentForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target;
+        
+        try {
+          await HospitalAPI.addDepartment(form.name.value, form.description.value);
+          form.reset();
+          UI.showNotification('Reparto aggiunto', 'success');
+          await Pages.loadSettings();
+          await populateDepartments();
+        } catch (err) {
+          UI.showNotification('Errore: ' + err.message, 'error');
+        }
+      });
+      
+      // Search patients
+      document.getElementById('searchPatients').addEventListener('input', async (e) => {
+        const term = e.target.value.trim();
+        if (term.length < 2) {
+          await Pages.loadPatients();
+          return;
+        }
+        
+        const results = await HospitalAPI.searchPatients(term);
+        const tbody = document.getElementById('patientsTbody');
+        
+        if (!results.length) {
+          tbody.innerHTML = '<tr><td colspan="8" class="p-4 text-center text-gray-500">Nessun risultato</td></tr>';
+          return;
+        }
+        
+        tbody.innerHTML = '';
+        results.forEach(p => {
+          const tr = document.createElement('tr');
+          tr.className = `border-b hover:bg-gray-50 ${UI.getTriageBorder(p.triageCode)}`;
+          tr.innerHTML = `
+            <td class="p-3">
+              <div class="font-medium">${UI.escape(p.firstName)} ${UI.escape(p.lastName)}</div>
+              <div class="text-xs text-gray-500">${UI.escape(p.fiscalCode || 'N/A')}</div>
+            </td>
+            <td class="p-3 text-sm">${UI.escape(p.birthDate || 'N/A')}</td>
+            <td class="p-3 text-sm">${UI.escape(p.phone || 'N/A')}</td>
+            <td class="p-3 text-sm">${UI.escape(p.department || 'N/A')}</td>
+            <td class="p-3">
+              ${p.triageCode ? `<span class="badge ${UI.getTriageColor(p.triageCode)}">${p.triageCode.toUpperCase()}</span>` : '<span class="text-gray-400 text-sm">-</span>'}
+            </td>
+            <td class="p-3 text-sm">${UI.escape(p.triageStatus || 'N/A')}</td>
+            <td class="p-3 text-xs text-gray-500">${UI.formatDate(p.createdAt)}</td>
+            <td class="p-3 text-right">
+              <button class="view-patient px-3 py-1 bg-blue-600 text-white rounded text-sm mr-1" data-id="${p.id}">Visualizza</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+        
+        document.querySelectorAll('.view-patient').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            await Pages.viewPatientDetail(e.target.dataset.id);
+          });
+        });
+      });
+      
+      // Modal close
+      document.getElementById('modalClose').addEventListener('click', UI.closeModal);
+      
+      // New patient button
+      document.getElementById('newPatientBtn').addEventListener('click', () => {
+        document.getElementById('patientForm').reset();
+        delete document.getElementById('patientForm').dataset.editId;
+        UI.showModal('Nuovo Paziente');
+      });
+    });
   </script>
-
-  <style>
-    .sidebar { background: linear-gradient(180deg,#022c41 0%, #063047 100%); }
-    .nav-item { transition: all .15s ease; }
-    .page { min-height:60vh; }
-  </style>
 </head>
 <body class="bg-gray-50">
-  <!-- AUTH -->
-  <div id="authArea" class="min-h-screen flex items-center justify-center p-6">
-    <div class="max-w-4xl w-full grid grid-cols-2 gap-6">
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h2 class="text-lg font-semibold mb-4">Accedi</h2>
-        <form id="loginForm" class="space-y-3">
-          <input name="email" type="email" required placeholder="Email" class="w-full p-2 border rounded" />
-          <input name="password" type="password" required placeholder="Password" class="w-full p-2 border rounded" />
-          <div class="flex gap-2"><button class="px-4 py-2 bg-sky-600 text-white rounded">Accedi</button></div>
-        </form>
+  <!-- AUTH AREA -->
+  <div id="authArea" class="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-blue-50 to-blue-100">
+    <div class="max-w-5xl w-full">
+      <div class="text-center mb-8">
+        <h1 class="text-4xl font-bold text-blue-900 mb-2">🏥 EMS Hospital Management</h1>
+        <p class="text-gray-600">Sistema Professionale di Gestione Ospedaliera</p>
       </div>
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h2 class="text-lg font-semibold mb-4">Crea account (staff)</h2>
-        <form id="registerForm" class="space-y-3">
-          <input name="name" placeholder="Nome e cognome" class="w-full p-2 border rounded" required />
-          <input name="email" type="email" placeholder="Email" class="w-full p-2 border rounded" required />
-          <input name="password" type="password" placeholder="Password" class="w-full p-2 border rounded" required />
-          <select name="department" class="dept-select w-full p-2 border rounded"></select>
-          <div class="flex gap-2"><button class="px-4 py-2 bg-green-600 text-white rounded">Registrati</button></div>
-          <div class="text-xs text-gray-500 mt-2">Il campo reparto può essere lasciato vuoto e impostato successivamente.</div>
-        </form>
+      
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- Login -->
+        <div class="bg-white p-8 rounded-xl shadow-lg">
+          <h2 class="text-2xl font-semibold mb-6 text-gray-800">Accedi</h2>
+          <form id="loginForm" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input name="email" type="email" required class="input-field" placeholder="tua@email.com" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <input name="password" type="password" required class="input-field" placeholder="••••••••" />
+            </div>
+            <button type="submit" class="w-full btn-primary py-3 text-lg">Accedi</button>
+          </form>
+        </div>
+        
+        <!-- Register -->
+        <div class="bg-white p-8 rounded-xl shadow-lg">
+          <h2 class="text-2xl font-semibold mb-6 text-gray-800">Registrazione Staff</h2>
+          <form id="registerForm" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Nome Completo</label>
+              <input name="name" required class="input-field" placeholder="Dr. Mario Rossi" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input name="email" type="email" required class="input-field" placeholder="mario.rossi@ospedale.it" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <input name="password" type="password" required class="input-field" placeholder="••••••••" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Ruolo</label>
+              <select name="role" class="input-field" required>
+                <option value="medico">Medico</option>
+                <option value="infermiere">Infermiere</option>
+                <option value="receptionist">Receptionist</option>
+                <option value="admin">Amministratore</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Reparto</label>
+              <select name="department" class="dept-select input-field"></select>
+            </div>
+            <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg text-lg font-medium transition">Registrati</button>
+          </form>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- APP -->
+  <!-- APP AREA -->
   <div id="appArea" class="hidden min-h-screen flex">
-    <aside class="sidebar w-64 text-white p-6 flex flex-col">
-      <div class="flex items-center gap-3 mb-6">
-        <div class="w-12 h-12 bg-white/10 rounded flex items-center justify-center font-bold">EMS</div>
-        <div>
-          <div class="font-bold text-lg">EMS Professionale</div>
-          <div class="text-sm text-white/80">Gestionale Pazienti</div>
+    <!-- Sidebar -->
+    <aside class="sidebar w-72 text-white flex flex-col shadow-2xl">
+      <div class="p-6 border-b border-blue-700">
+        <div class="flex items-center gap-3 mb-4">
+          <div class="w-14 h-14 bg-white/20 rounded-xl flex items-center justify-center text-2xl">🏥</div>
+          <div>
+            <div class="font-bold text-xl">EMS Hospital</div>
+            <div class="text-sm text-blue-200">Management System</div>
+          </div>
         </div>
-      </div>
-      <nav class="space-y-1 mb-4">
-        <a href="#" class="block px-3 py-2 rounded nav-item bg-sky-600 text-white" data-nav="pageDashboard">🏠 Dashboard</a>
-        <a href="#" class="block px-3 py-2 rounded nav-item" data-nav="pagePatients">👨‍⚕️ Pazienti</a>
-        <a href="#" class="block px-3 py-2 rounded nav-item" data-nav="pageAppointments">📅 Appuntamenti</a>
-        <a href="#" class="block px-3 py-2 rounded nav-item" data-nav="pageExams">🧪 Esami</a>
-        <a href="#" class="block px-3 py-2 rounded nav-item" data-nav="pageSettings">⚙️ Impostazioni</a>
-      </nav>
-      <div class="mt-auto">
         <div id="userDisplay" class="text-sm"></div>
-        <button id="logoutBtn" class="mt-3 w-full bg-red-600 px-3 py-2 rounded">Logout</button>
+      </div>
+      
+      <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
+        <a href="#" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg text-white" data-nav="pageDashboard">
+          <span class="text-xl">📊</span>
+          <span class="font-medium">Dashboard</span>
+        </a>
+        <a href="#" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg" data-nav="pagePatients">
+          <span class="text-xl">👥</span>
+          <span class="font-medium">Pazienti</span>
+        </a>
+        <a href="#" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg" data-nav="pageAppointments">
+          <span class="text-xl">📅</span>
+          <span class="font-medium">Appuntamenti</span>
+        </a>
+        <a href="#" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg" data-nav="pageShifts">
+          <span class="text-xl">⏰</span>
+          <span class="font-medium">Turni</span>
+        </a>
+        <a href="#" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg" data-nav="pageReports">
+          <span class="text-xl">📋</span>
+          <span class="font-medium">Referti</span>
+        </a>
+        <a href="#" class="nav-item flex items-center gap-3 px-4 py-3 rounded-lg admin-only" data-nav="pageSettings">
+          <span class="text-xl">⚙️</span>
+          <span class="font-medium">Impostazioni</span>
+        </a>
+      </nav>
+      
+      <div class="p-4 border-t border-blue-700">
+        <button id="logoutBtn" class="w-full bg-red-600 hover:bg-red-700 px-4 py-3 rounded-lg font-medium transition">
+          Logout
+        </button>
       </div>
     </aside>
 
-    <main class="flex-1 p-8">
-      <header class="flex items-center justify-between mb-6">
-        <div>
-          <h2 class="text-2xl font-semibold">Benvenuto</h2>
-          <div class="text-sm text-gray-500">Sistema gestionale medico professionale</div>
-        </div>
-        <div class="flex items-center gap-3">
-          <button class="px-3 py-2 bg-gray-100 rounded" onclick="loadDashboard()">Aggiorna</button>
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto">
+      <header class="bg-white border-b px-8 py-6 sticky top-0 z-10 shadow-sm">
+        <div class="flex justify-between items-center">
+          <div>
+            <h2 class="text-3xl font-bold text-gray-800">Benvenuto</h2>
+            <p class="text-gray-500 mt-1">Sistema di gestione ospedaliera professionale</p>
+          </div>
+          <div class="text-sm text-gray-500">
+            <span id="currentDate"></span>
+          </div>
         </div>
       </header>
 
-      <!-- Pages -->
-      <section id="pageDashboard" class="page">
-        <div class="grid grid-cols-3 gap-6 mb-6">
-          <div class="bg-white p-4 rounded shadow-sm"><div class="text-sm text-gray-500">Totale Pazienti</div><div id="statPatients" class="text-2xl font-bold mt-2">0</div></div>
-          <div class="bg-white p-4 rounded shadow-sm"><div class="text-sm text-gray-500">Appuntamenti oggi</div><div id="statToday" class="text-2xl font-bold mt-2">0</div></div>
-          <div class="bg-white p-4 rounded shadow-sm"><div class="text-sm text-gray-500">In arrivo</div><div id="statUpcoming" class="text-2xl font-bold mt-2">-</div></div>
-        </div>
-        <div class="grid grid-cols-2 gap-6">
-          <div class="bg-white p-4 rounded shadow-sm">
-            <h4 class="font-semibold mb-2">Pazienti per reparto</h4>
-            <canvas id="chartPatientsDept" height="120"></canvas>
+      <div class="p-8">
+        <!-- DASHBOARD -->
+        <section id="pageDashboard" class="page">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="stat-card">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-sm text-gray-500 font-medium">Totale Pazienti</div>
+                  <div id="statTotalPatients" class="text-3xl font-bold text-gray-800 mt-2">0</div>
+                </div>
+                <div class="text-4xl">👥</div>
+              </div>
+            </div>
+            
+            <div class="stat-card">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-sm text-gray-500 font-medium">Appuntamenti Oggi</div>
+                  <div id="statTodayAppointments" class="text-3xl font-bold text-blue-600 mt-2">0</div>
+                </div>
+                <div class="text-4xl">📅</div>
+              </div>
+            </div>
+            
+            <div class="stat-card">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-sm text-gray-500 font-medium">Staff in Servizio</div>
+                  <div id="statActiveStaff" class="text-3xl font-bold text-green-600 mt-2">0</div>
+                </div>
+                <div class="text-4xl">👨‍⚕️</div>
+              </div>
+            </div>
+            
+            <div class="stat-card">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="text-sm text-gray-500 font-medium">Coda Triage</div>
+                  <div id="statTriageQueue" class="text-3xl font-bold text-red-600 mt-2">0</div>
+                </div>
+                <div class="text-4xl">🚨</div>
+              </div>
+            </div>
           </div>
-          <div class="bg-white p-4 rounded shadow-sm">
-            <h4 class="font-semibold mb-2">Appuntamenti prossimi 7 giorni</h4>
-            <canvas id="chartAppts7d" height="120"></canvas>
+          
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-lg font-semibold mb-4">Pazienti per Reparto</h3>
+              <canvas id="chartPatientsDept" height="200"></canvas>
+            </div>
+            
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-lg font-semibold mb-4">Distribuzione Triage</h3>
+              <canvas id="chartTriage" height="200"></canvas>
+            </div>
           </div>
-        </div>
-        <div class="mt-6 bg-white p-4 rounded shadow-sm">
-          <h4 class="font-semibold mb-2">Ultimi pazienti</h4>
-          <div id="latestPatients" class="text-sm text-gray-600"></div>
-        </div>
-      </section>
+          
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-lg font-semibold mb-4">Appuntamenti Prossimi 7 Giorni</h3>
+              <canvas id="chartAppts7d" height="180"></canvas>
+            </div>
+            
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-lg font-semibold mb-4">Pazienti Recenti</h3>
+              <div id="recentPatients" class="space-y-2"></div>
+            </div>
+          </div>
+          
+          <div class="mt-6 bg-white p-6 rounded-xl shadow-sm">
+            <h3 class="text-lg font-semibold mb-4">Log Attività Recenti</h3>
+            <div id="activityLog" class="space-y-2 max-h-64 overflow-y-auto"></div>
+          </div>
+        </section>
 
-      <section id="pagePatients" class="page hidden">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-xl font-semibold">Pazienti</h3>
-          <div>
-            <button onclick="document.getElementById('patientForm').reset(); delete document.getElementById('patientForm').dataset.editId; showModal('Nuovo Paziente');" class="px-3 py-2 bg-sky-600 text-white rounded">Nuovo paziente</button>
+        <!-- PATIENTS -->
+        <section id="pagePatients" class="page hidden">
+          <div class="bg-white rounded-xl shadow-sm p-6">
+            <div class="flex justify-between items-center mb-6">
+              <div>
+                <h3 class="text-2xl font-bold text-gray-800">Gestione Pazienti</h3>
+                <p class="text-gray-500 mt-1">Visualizza e gestisci tutti i pazienti</p>
+              </div>
+              <button id="newPatientBtn" class="btn-primary px-6 py-3">
+                <span class="mr-2">➕</span> Nuovo Paziente
+              </button>
+            </div>
+            
+            <div class="mb-4">
+              <input 
+                id="searchPatients" 
+                type="text" 
+                placeholder="🔍 Cerca per nome, cognome, codice fiscale o telefono..." 
+                class="input-field w-full md:w-96"
+              />
+            </div>
+            
+            <div class="overflow-x-auto">
+              <table class="w-full table-hover">
+                <thead class="bg-gray-50 border-b-2 border-gray-200">
+                  <tr>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Paziente</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Data Nascita</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Telefono</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Reparto</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Triage</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Stato</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Data Accesso</th>
+                    <th class="p-3 text-right text-sm font-semibold text-gray-700">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody id="patientsTbody"></tbody>
+              </table>
+            </div>
           </div>
-        </div>
-        <div class="bg-white rounded shadow-sm overflow-auto">
-          <table class="w-full text-left">
-            <thead class="bg-gray-50 text-sm text-gray-600"><tr><th class="p-2">Nome</th><th class="p-2">Cognome</th><th class="p-2">Nascita</th><th class="p-2">Telefono</th><th class="p-2">Patologie</th><th class="p-2 text-right">Azioni</th></tr></thead>
-            <tbody id="patientsTbody" class="text-sm"></tbody>
-          </table>
-        </div>
-      </section>
+        </section>
 
-      <section id="pageAppointments" class="page hidden">
-        <div class="mb-4 grid grid-cols-3 gap-4">
-          <div class="col-span-1 bg-white p-4 rounded shadow-sm">
-            <h4 class="font-semibold mb-2">Nuovo appuntamento</h4>
-            <form id="appointmentForm" class="space-y-2">
-              <input name="title" placeholder="Titolo" class="w-full p-2 border rounded" required />
-              <select class="patient-select w-full p-2 border rounded" name="patientId"></select>
-              <div class="grid grid-cols-2 gap-2"><input type="datetime-local" name="start" class="p-2 border rounded" required /><input type="datetime-local" name="end" class="p-2 border rounded" /></div>
-              <textarea name="notes" placeholder="Note" class="w-full p-2 border rounded"></textarea>
-              <div class="flex gap-2"><button class="px-3 py-2 bg-sky-600 text-white rounded">Salva</button></div>
-            </form>
+        <!-- APPOINTMENTS -->
+        <section id="pageAppointments" class="page hidden">
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-xl font-bold mb-4">Nuovo Appuntamento</h3>
+              <form id="appointmentForm" class="space-y-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Titolo</label>
+                  <input name="title" required class="input-field" placeholder="Visita di controllo" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Paziente</label>
+                  <select name="patientId" class="patient-select input-field" required></select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+                  <select name="type" class="input-field">
+                    <option value="normale">Normale</option>
+                    <option value="urgente">Urgente</option>
+                    <option value="controllo">Controllo</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Inizio</label>
+                  <input name="start" type="datetime-local" required class="input-field" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Fine</label>
+                  <input name="end" type="datetime-local" class="input-field" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Note</label>
+                  <textarea name="notes" class="input-field" rows="3"></textarea>
+                </div>
+                <button type="submit" class="w-full btn-primary py-3">Crea Appuntamento</button>
+              </form>
+            </div>
+            
+            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-xl font-bold mb-4">Calendario Appuntamenti</h3>
+              <div id="calendar"></div>
+            </div>
           </div>
-          <div class="col-span-2 bg-white p-4 rounded shadow-sm">
-            <div id="calendar"></div>
+        </section>
+
+        <!-- SHIFTS -->
+        <section id="pageShifts" class="page hidden">
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-xl font-bold mb-4">Programma Turno</h3>
+              <form id="shiftForm" class="space-y-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Nome Staff</label>
+                  <input name="staffName" required class="input-field" placeholder="Dr. Mario Rossi" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Ruolo</label>
+                  <select name="role" class="input-field" required>
+                    <option value="medico">Medico</option>
+                    <option value="infermiere">Infermiere</option>
+                    <option value="oss">OSS</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Reparto</label>
+                  <select name="department" class="dept-select input-field" required></select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Inizio Turno</label>
+                  <input name="startTime" type="datetime-local" required class="input-field" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Fine Turno</label>
+                  <input name="endTime" type="datetime-local" required class="input-field" />
+                </div>
+                <button type="submit" class="w-full btn-primary py-3">Programma Turno</button>
+              </form>
+            </div>
+            
+            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-xl font-bold mb-4">Turni Programmati</h3>
+              <div class="overflow-x-auto">
+                <table class="w-full table-hover">
+                  <thead class="bg-gray-50 border-b-2 border-gray-200">
+                    <tr>
+                      <th class="p-3 text-left text-sm font-semibold text-gray-700">Staff</th>
+                      <th class="p-3 text-left text-sm font-semibold text-gray-700">Ruolo</th>
+                      <th class="p-3 text-left text-sm font-semibold text-gray-700">Reparto</th>
+                      <th class="p-3 text-left text-sm font-semibold text-gray-700">Inizio</th>
+                      <th class="p-3 text-left text-sm font-semibold text-gray-700">Fine</th>
+                      <th class="p-3 text-left text-sm font-semibold text-gray-700">Stato</th>
+                      <th class="p-3 text-right text-sm font-semibold text-gray-700">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody id="shiftsTbody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section id="pageExams" class="page hidden">
-        <div class="bg-white p-4 rounded shadow-sm">Sezione Esami (semplice elenco per ora)</div>
-      </section>
-
-      <section id="pageSettings" class="page hidden">
-        <div class="grid grid-cols-2 gap-4">
-          <div class="bg-white p-4 rounded shadow-sm" id="addDeptCard">
-            <h4 class="font-semibold mb-2">Aggiungi reparto</h4>
-            <form id="addDeptForm" class="space-y-2"><input name="deptName" placeholder="Nome reparto" class="w-full p-2 border rounded" required /><div class="flex gap-2"><button class="px-3 py-2 bg-sky-600 text-white rounded">Aggiungi</button></div></form>
+        <!-- REPORTS -->
+        <section id="pageReports" class="page hidden">
+          <div class="bg-white p-6 rounded-xl shadow-sm">
+            <div class="flex justify-between items-center mb-6">
+              <div>
+                <h3 class="text-2xl font-bold text-gray-800">Referti Medici</h3>
+                <p class="text-gray-500 mt-1">Visualizza tutti i referti medici</p>
+              </div>
+            </div>
+            
+            <div class="overflow-x-auto">
+              <table class="w-full table-hover">
+                <thead class="bg-gray-50 border-b-2 border-gray-200">
+                  <tr>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Titolo</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Paziente</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Medico</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Diagnosi</th>
+                    <th class="p-3 text-left text-sm font-semibold text-gray-700">Data</th>
+                    <th class="p-3 text-right text-sm font-semibold text-gray-700">Azioni</th>
+                  </tr>
+                </thead>
+                <tbody id="reportsTbody"></tbody>
+              </table>
+            </div>
           </div>
-          <div class="bg-white p-4 rounded shadow-sm"><h4 class="font-semibold mb-2">Reparti esistenti</h4><div id="departmentsList"></div></div>
-        </div>
-      </section>
+        </section>
 
+        <!-- SETTINGS -->
+        <section id="pageSettings" class="page hidden admin-only">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-xl font-bold mb-4">Aggiungi Reparto</h3>
+              <form id="departmentForm" class="space-y-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Nome Reparto</label>
+                  <input name="name" required class="input-field" placeholder="Cardiologia" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Descrizione</label>
+                  <textarea name="description" class="input-field" rows="3" placeholder="Descrizione del reparto..."></textarea>
+                </div>
+                <button type="submit" class="w-full btn-primary py-3">Aggiungi Reparto</button>
+              </form>
+            </div>
+            
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+              <h3 class="text-xl font-bold mb-4">Reparti Esistenti</h3>
+              <div id="departmentsList" class="space-y-2 max-h-96 overflow-y-auto"></div>
+            </div>
+          </div>
+          
+          <div class="mt-6 bg-white p-6 rounded-xl shadow-sm admin-only">
+            <h3 class="text-xl font-bold mb-4">Utenti Registrati</h3>
+            <div id="usersList" class="space-y-2 max-h-96 overflow-y-auto"></div>
+          </div>
+        </section>
+      </div>
     </main>
   </div>
 
-  <!-- Modal -->
-  <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center p-4">
-    <div class="bg-white w-full max-w-2xl rounded shadow p-4">
-      <div class="flex justify-between items-center mb-3"><h3 id="modalTitle" class="font-semibold">Modal</h3><button onclick="closeModal()" class="text-gray-600">Chiudi</button></div>
-      <div id="modalBody">
-        <form id="patientForm" class="space-y-2">
-          <div class="grid grid-cols-2 gap-2"><input name="firstName" placeholder="Nome" class="p-2 border rounded" required /><input name="lastName" placeholder="Cognome" class="p-2 border rounded" required /></div>
-          <div class="grid grid-cols-2 gap-2"><input name="birthDate" type="date" class="p-2 border rounded" /><input name="phone" placeholder="Telefono" class="p-2 border rounded" /></div>
-          <div class="grid grid-cols-2 gap-2"><input name="height" placeholder="Altezza (cm)" class="p-2 border rounded" /><input name="weight" placeholder="Peso (kg)" class="p-2 border rounded" /></div>
-          <select name="department" class="dept-select p-2 border rounded"></select>
-          <textarea name="clinicalHistory" placeholder="Storia clinica" class="p-2 border rounded"></textarea>
-          <textarea name="medications" placeholder="Farmaci" class="p-2 border rounded"></textarea>
-          <textarea name="pathologies" placeholder="Patologie" class="p-2 border rounded"></textarea>
-          <div class="flex justify-end gap-2"><button type="button" onclick="closeModal()" class="px-3 py-2 bg-gray-200 rounded">Annulla</button><button class="px-3 py-2 bg-sky-600 text-white rounded">Salva paziente</button></div>
+  <!-- MODAL -->
+  <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 modal-overlay hidden items-center justify-center p-4 z-50">
+    <div class="bg-white w-full max-w-4xl rounded-xl shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div class="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
+        <h3 id="modalTitle" class="text-2xl font-bold text-gray-800">Modal</h3>
+        <button id="modalClose" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+      </div>
+      <div id="modalBody" class="p-6">
+        <!-- Patient Form -->
+        <form id="patientForm" class="space-y-4 hidden">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Nome *</label>
+              <input name="firstName" required class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Cognome *</label>
+              <input name="lastName" required class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Codice Fiscale</label>
+              <input name="fiscalCode" class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Data di Nascita</label>
+              <input name="birthDate" type="date" class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Telefono</label>
+              <input name="phone" type="tel" class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input name="email" type="email" class="input-field" />
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Indirizzo</label>
+              <input name="address" class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Altezza (cm)</label>
+              <input name="height" type="number" class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Peso (kg)</label>
+              <input name="weight" type="number" class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Gruppo Sanguigno</label>
+              <select name="bloodType" class="input-field">
+                <option value="">Seleziona</option>
+                <option value="A+">A+</option>
+                <option value="A-">A-</option>
+                <option value="B+">B+</option>
+                <option value="B-">B-</option>
+                <option value="AB+">AB+</option>
+                <option value="AB-">AB-</option>
+                <option value="0+">0+</option>
+                <option value="0-">0-</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Reparto</label>
+              <select name="department" class="dept-select input-field"></select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Codice Triage</label>
+              <select name="triageCode" class="input-field">
+                <option value="">Nessuno</option>
+                <option value="rosso">🔴 Rosso - Emergenza</option>
+                <option value="giallo">🟡 Giallo - Urgenza</option>
+                <option value="verde">🟢 Verde - Urgenza Minore</option>
+                <option value="bianco">⚪ Bianco - Non Urgente</option>
+                <option value="azzurro">🔵 Azzurro - Codice Differibile</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Stato Triage</label>
+              <select name="triageStatus" class="input-field">
+                <option value="">Seleziona</option>
+                <option value="in_attesa">In Attesa</option>
+                <option value="in_visita">In Visita</option>
+                <option value="completato">Completato</option>
+                <option value="dimesso">Dimesso</option>
+              </select>
+            </div>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Storia Clinica</label>
+            <textarea name="clinicalHistory" class="input-field" rows="3"></textarea>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Patologie</label>
+            <textarea name="pathologies" class="input-field" rows="2"></textarea>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Farmaci Attuali</label>
+            <textarea name="medications" class="input-field" rows="2"></textarea>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Allergie</label>
+            <textarea name="allergies" class="input-field" rows="2"></textarea>
+          </div>
+          
+          <div class="flex gap-3 pt-4">
+            <button type="button" onclick="UI.closeModal()" class="btn-secondary px-6 py-3">Annulla</button>
+            <button type="submit" class="btn-primary px-6 py-3">Salva Paziente</button>
+          </div>
+        </form>
+        
+        <!-- Report Form -->
+        <form id="reportForm" class="space-y-4 hidden">
+          <input type="hidden" name="patientId" />
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Titolo Referto *</label>
+            <input name="title" required class="input-field" placeholder="Visita cardiologica" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Diagnosi *</label>
+            <textarea name="diagnosis" required class="input-field" rows="4"></textarea>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Trattamento Prescritto</label>
+            <textarea name="treatment" class="input-field" rows="3"></textarea>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Note Aggiuntive</label>
+            <textarea name="notes" class="input-field" rows="3"></textarea>
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button type="button" onclick="UI.closeModal()" class="btn-secondary px-6 py-3">Annulla</button>
+            <button type="submit" class="btn-primary px-6 py-3">Salva Referto</button>
+          </div>
+        </form>
+        
+        <!-- Prescription Form -->
+        <form id="prescriptionForm" class="space-y-4 hidden">
+          <input type="hidden" name="patientId" />
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Farmaco *</label>
+            <input name="medication" required class="input-field" placeholder="Aspirina" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Dosaggio *</label>
+            <input name="dosage" required class="input-field" placeholder="100mg" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Frequenza *</label>
+            <input name="frequency" required class="input-field" placeholder="1 volta al giorno" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Durata</label>
+            <input name="duration" class="input-field" placeholder="30 giorni" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Note</label>
+            <textarea name="notes" class="input-field" rows="3"></textarea>
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button type="button" onclick="UI.closeModal()" class="btn-secondary px-6 py-3">Annulla</button>
+            <button type="submit" class="btn-primary px-6 py-3">Salva Prescrizione</button>
+          </div>
         </form>
       </div>
     </div>
   </div>
 
+  <script>
+    // Show current date
+    document.getElementById('currentDate').textContent = new Date().toLocaleDateString('it-IT', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+    
+    // Show appropriate form in modal
+    window.showModal = (title, content) => {
+      document.getElementById('modalTitle').textContent = title;
+      
+      // Hide all forms
+      document.querySelectorAll('#modalBody form').forEach(f => f.classList.add('hidden'));
+      
+      // Show specific form or content
+      if (title.includes('Paziente')) {
+        document.getElementById('patientForm').classList.remove('hidden');
+      } else if (title.includes('Referto')) {
+        document.getElementById('reportForm').classList.remove('hidden');
+      } else if (title.includes('Prescrizione')) {
+        document.getElementById('prescriptionForm').classList.remove('hidden');
+      } else if (content) {
+        // Custom content
+        const customDiv = document.createElement('div');
+        customDiv.innerHTML = content;
+        document.getElementById('modalBody').appendChild(customDiv);
+      }
+      
+      window.UI.showModal(title);
+    };
+  </script>
 </body>
 </html>
